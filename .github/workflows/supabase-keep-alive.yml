@@ -2,33 +2,45 @@ name: Supabase Keep Alive
 
 on:
   schedule:
-    # Every 2 days at 02:17 UTC (09:17 WIB)
-    - cron: "17 2 */2 * *"
+    # Every day at 02:17 UTC (09:17 WIB)
+    - cron: "17 2 * * *"
   workflow_dispatch:
 
 jobs:
-  ping-supabase:
+  keep-alive:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Check Supabase REST API
+      - name: Check Supabase database
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
         run: |
-          set -e
+          set -euo pipefail
 
-          echo "Checking Supabase..."
+          echo "Checking Supabase database..."
 
-          HTTP_CODE=$(curl -sS -o /tmp/supabase_response.txt -w "%{http_code}"             "${SUPABASE_URL}/rest/v1/licenses?select=id&limit=1"             -H "apikey: ${SUPABASE_ANON_KEY}"             -H "Authorization: Bearer ${SUPABASE_ANON_KEY}")
-
-          echo "HTTP status: ${HTTP_CODE}"
-
-          if [ "${HTTP_CODE}" -ge 200 ] && [ "${HTTP_CODE}" -lt 300 ]; then
-            echo "Supabase is reachable."
-            exit 0
+          if [ -z "${SUPABASE_URL}" ] || [ -z "${SUPABASE_ANON_KEY}" ]; then
+            echo "ERROR: SUPABASE_URL or SUPABASE_ANON_KEY is not configured."
+            exit 1
           fi
 
-          echo "Supabase request failed:"
-          cat /tmp/supabase_response.txt
-          exit 1
+          # Make several lightweight REAL database requests.
+          # This is intentionally a SELECT against the existing licenses table.
+          for i in 1 2 3; do
+            echo "Database request ${i}/3..."
+
+            HTTP_CODE=$(curl -sS               -o "/tmp/supabase_response_${i}.txt"               -w "%{http_code}"               "${SUPABASE_URL}/rest/v1/licenses?select=id&limit=1"               -H "apikey: ${SUPABASE_ANON_KEY}"               -H "Authorization: Bearer ${SUPABASE_ANON_KEY}"               -H "Accept: application/json")
+
+            echo "HTTP status: ${HTTP_CODE}"
+
+            if [ "${HTTP_CODE}" -lt 200 ] || [ "${HTTP_CODE}" -ge 300 ]; then
+              echo "Supabase database request failed:"
+              cat "/tmp/supabase_response_${i}.txt"
+              exit 1
+            fi
+
+            sleep 3
+          done
+
+          echo "Supabase database activity completed successfully."
